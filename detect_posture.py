@@ -59,7 +59,7 @@ DEVICE_ID = 1               # Web camera id (0 is maybe built-in camera)
 EYE_HEIGHTS = LimitedList()         # History of eye height
 SMA_EYE_HEIGHTS = LimitedList()     # History of the simple moving average (SMA) of eye hight
 
-SMA_SEC = 60                        # SMA seconds
+SMA_SEC = 30                        # SMA seconds
 SMA_N = SMA_SEC * CAP_FRAME_FPS     # SMA n
 
 PLOT_NUM = 20                   # Plot points number
