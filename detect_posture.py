@@ -1,52 +1,9 @@
 import sys
-from collections import UserList
 import numpy as np
 from matplotlib import pyplot as plt
 import cv2
 import tkinter as tk
 from tkinter import messagebox
-
-
-class LimitedList(UserList):
-    """
-    Custom list class for numbers
-
-    The size of list can be limited.
-    Store the maximum and minimum from the first.
-    """
-    def __init__(self, initlist=None):
-        if initlist is not None and not all([type(e) is int or type(e) is float for e in initlist]):
-            ValueError("invalid args for LimitedList.")
-        super().__init__(initlist)
-        self._maximum = max(self.data) if self.data else 0
-        self._minimum = min(self.data) if self.data else 0
-    
-    def append(self, item):
-        if type(item) is not int or type(item) is not float:
-            ValueError(f"invalid argument for LimitedList: {item}")
-        super().append(item)
-    
-    def insert(self, i, item):
-        if type(item) is not int or type(item) is not float:
-            ValueError(f"invalid argument for LimitedList: {item}")
-        super().insert(i, item)
-    
-    def extend(self, iterable):
-        if not all([type(e) is int or type(e) is float for e in iterable]):
-            ValueError(f"invalid args for LimitedList.")
-        super().extend(iterable)
-
-    def max(self):
-        return max((self._maximum, max(self.data)))
-    
-    def min(self):
-        return min((self._minimum, min(self.data)))
-
-    def limit(self, limit=10000):
-        self._maximum = max(self.data) if self.data else 0
-        self._minimum = min(self.data) if self.data else 0
-        if len(self.data) > limit:
-            self.data = self.data[-limit:]
 
 
 WINDOW_NAME = "capture"     # Videcapute window name
@@ -56,10 +13,7 @@ CAP_FRAME_FPS = 30          # Videocapture fps (depends on user camera)
 
 DEVICE_ID = 1               # Web camera id (0 is maybe built-in camera)
 
-EYE_HEIGHTS = LimitedList()         # History of eye height
-SMA_EYE_HEIGHTS = LimitedList()     # History of the simple moving average (SMA) of eye hight
-
-SMA_SEC = 30                        # SMA seconds
+SMA_SEC = 10                        # SMA seconds
 SMA_N = SMA_SEC * CAP_FRAME_FPS     # SMA n
 
 PLOT_NUM = 20                   # Plot points number
@@ -67,6 +21,7 @@ PLOT_DELTA = 1/CAP_FRAME_FPS    # Step of X axis
 
 Z = 45                  # (cm) Distance from PC to face 
 D = 3                   # (cm) Limit of lowering eyes
+F = 500                 # Focal length
 
 
 def count_camera_connection(limit=10):
@@ -85,30 +40,17 @@ def count_camera_connection(limit=10):
     return len(valid_cameras)
 
 
-def moving_average(data, n):
-    """
-    Return simple moving average.
-    """
-    if len(data) < n:
-        raise ValueError
+def simple_moving_average(n, data):
+    """ Return simple moving average """
     result = []
-    for i in range(n-1, len(data)):
-        total = 0
-        for j in range(n):
-            total += data[i-j]
+    for m in range(n-1, len(data)):
+        total = sum([data[m-i] for i in range(n)])
         result.append(total/n)
     return result
 
-
-def add_moving_average(smas, data, n):
-    """
-    Add the latest simple moving average.
-    """
-    if len(data) < n:
-        raise ValueError
-    total = 0
-    for i in range(n):
-        total += data[-1-i]
+def add_simple_moving_average(smas, n, data):
+    """ Add simple moving average """
+    total = sum([data[-1-i] for i in range(n)])
     smas.append(total/n)
 
 
@@ -122,9 +64,8 @@ if __name__ == '__main__':
     if not count_camera_connection():
         sys.exit(1)
 
-    # Set cascade
-    cascade_file = "haarcascade_eye.xml"
-    cascade = cv2.CascadeClassifier(cascade_file)
+    # Chose cascade
+    cascade = cv2.CascadeClassifier("haarcascade_eye.xml")
 
     # Capture setup
     cap = cv2.VideoCapture(DEVICE_ID, cv2.CAP_DSHOW)
@@ -135,20 +76,26 @@ if __name__ == '__main__':
     # Prepare windows
     cv2.namedWindow(WINDOW_NAME)
 
+    # Time series data of eye height
+    eye_heights = []
+    sma_eye_heights = []
+
     # Plot setup
     ax = plt.subplot()
     graph_x = np.arange(0, PLOT_NUM*PLOT_DELTA, PLOT_DELTA)
     eye_y = [0] * PLOT_NUM
-    smas_eye_y = [0] * PLOT_NUM
+    sma_eye_y = [0] * PLOT_NUM
     eye_lines, = ax.plot(graph_x, eye_y, label="realtime")
-    smas_eye_lines, = ax.plot(graph_x, smas_eye_y, label="SMA")
+    sma_eye_lines, = ax.plot(graph_x, sma_eye_y, label="SMA")
     ax.legend()
 
+
     while cap.isOpened():
+        # Get a frame
         ret, frame = cap.read()
 
-        img = frame
-        img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        # Convert image to gray scale
+        img_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
         # Detect human eyes
         eyes = cascade.detectMultiScale(img_gray, minSize=(30, 30))
@@ -156,30 +103,26 @@ if __name__ == '__main__':
         # Mark on the detected eyes
         for (x, y, w, h) in eyes:
             color = (255, 0, 0)
-            line_width = 3
-            cv2.rectangle(img_gray, (x, y), (x+w, y+h), color, thickness=line_width)
+            cv2.rectangle(img_gray, (x, y), (x+w, y+h), color, thickness=3)
         
         # Store eye heights
         if len(eyes) > 0:
             eye_average_height = CAP_FRAME_HEIGHT - sum([y for _, y, _, _ in eyes]) / len(eyes)
-            EYE_HEIGHTS.append(eye_average_height)
+            eye_heights.append(eye_average_height)
 
-            if len(EYE_HEIGHTS) == SMA_N:
-                SMA_EYE_HEIGHTS = LimitedList(moving_average(EYE_HEIGHTS, SMA_N))
-            elif len(EYE_HEIGHTS) > SMA_N:
-                add_moving_average(SMA_EYE_HEIGHTS, EYE_HEIGHTS, SMA_N)
+            if len(eye_heights) == SMA_N:
+                sma_eye_heights = simple_moving_average(SMA_N, eye_heights)
+            elif len(eye_heights) > SMA_N:
+                add_simple_moving_average(sma_eye_heights, SMA_N, eye_heights)
             
-            # Reshape lists
-            EYE_HEIGHTS.limit()
-            SMA_EYE_HEIGHTS.limit()
 
         # Detect bad posture
-        if SMA_EYE_HEIGHTS and (SMA_EYE_HEIGHTS.max() - SMA_EYE_HEIGHTS[-1] > 500 * D / Z):
+        if sma_eye_heights and (sma_eye_heights[0] - sma_eye_heights[-1] > F * D / Z):
             res = messagebox.showinfo("BAD POSTURE!", "Sit up straight!\nCorrect your posture, then click ok.")
             if res == "ok":
                 # Initialize state, and restart from begening
-                EYE_HEIGHTS = LimitedList()
-                SMA_EYE_HEIGHTS = LimitedList()
+                eye_heights = []
+                sma_eye_heights = []
                 graph_x = np.arange(0, PLOT_NUM*PLOT_DELTA, PLOT_DELTA)
                 continue
 
@@ -188,18 +131,18 @@ if __name__ == '__main__':
         ax.set_xlim((graph_x.min(), graph_x.max()))
         ax.set_ylim(0, CAP_FRAME_HEIGHT)
 
-        if len(EYE_HEIGHTS) >= PLOT_NUM:
-            eye_y = EYE_HEIGHTS[-PLOT_NUM:]
+        if len(eye_heights) >= PLOT_NUM:
+            eye_y = eye_heights[-PLOT_NUM:]
             eye_lines.set_data(graph_x, eye_y)
             plt.pause(.001)
         
-        if len(SMA_EYE_HEIGHTS) >= PLOT_NUM:
-            smas_eye_y = SMA_EYE_HEIGHTS[-PLOT_NUM:]
-            smas_eye_lines.set_data(graph_x, smas_eye_y)
+        if len(sma_eye_heights) >= PLOT_NUM:
+            sma_eye_y = sma_eye_heights[-PLOT_NUM:]
+            sma_eye_lines.set_data(graph_x, sma_eye_y)
             plt.pause(.001)
 
         
-        # Show video
+        # Show result
         cv2.imshow(WINDOW_NAME, img_gray)
 
         # Quit with ESC Key
